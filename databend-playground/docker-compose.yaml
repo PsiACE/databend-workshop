@@ -1,0 +1,45 @@
+version: '3'
+
+services:
+  databend-minio:
+    image: docker.io/minio/minio
+    command: server --console-address ":9001" /data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./data:/data
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - databend-minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add databendminio http://databend-minio:9000 minioadmin minioadmin;
+      /usr/bin/mc rm -r --force databendminio/databend;
+      /usr/bin/mc mb databendminio/databend;
+      /usr/bin/mc policy download databendminio/minioadmin;
+      exit 0;
+      "
+  databend-instance:
+    image: docker.io/datafuselabs/databend:latest
+    environment:
+      - QUERY_DEFAULT_USER=databend
+      - QUERY_DEFAULT_PASSWORD=databend
+      - QUERY_STORAGE_TYPE=s3
+      - AWS_S3_ENDPOINT=http://databend-minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    ports:
+      - "8000:8000"
+    depends_on:
+      - databend-minio
+    healthcheck:
+      test: "curl -f localhost:8080/v1/health || exit 1"
+  databend-playground:
+    image: docker.io/psiace/databend-playground
+    command: databend-playground --listen-addr 0.0.0.0:4000 --bend-http-api http://databend-instance:8000 --user databend --password databend
+    depends_on:
+      - databend-instance
+    ports:
+      - "4000:4000"
